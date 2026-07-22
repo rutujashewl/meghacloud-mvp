@@ -6,38 +6,39 @@
 //   PATCH /api/notifications/read-all     - mark all as read
 
 const express = require("express");
-const db = require("../db/init");
+const { db } = require("../db/init");
 const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 router.use(requireAuth);
 
-router.get("/", (req, res) => {
-  const notifications = db
+router.get("/", async (req, res) => {
+  const notifications = await db
     .prepare("SELECT * FROM notifications WHERE user_id = ? ORDER BY created_at DESC LIMIT 50")
     .all(req.user.id);
   res.json({ notifications });
 });
 
-router.get("/unread-count", (req, res) => {
-  const row = db
+router.get("/unread-count", async (req, res) => {
+  const row = await db
     .prepare("SELECT COUNT(*) as count FROM notifications WHERE user_id = ? AND is_read = 0")
     .get(req.user.id);
-  res.json({ count: row.count });
+  // Postgres returns COUNT(*) as a string (bigint) — coerce to a real number.
+  res.json({ count: parseInt(row?.count, 10) || 0 });
 });
 
-router.patch("/:id/read", (req, res) => {
-  const notification = db
+router.patch("/:id/read", async (req, res) => {
+  const notification = await db
     .prepare("SELECT * FROM notifications WHERE id = ? AND user_id = ?")
     .get(req.params.id, req.user.id);
   if (!notification) return res.status(404).json({ error: "Notification not found" });
 
-  db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(notification.id);
+  await db.prepare("UPDATE notifications SET is_read = 1 WHERE id = ?").run(notification.id);
   res.json({ notification: { ...notification, is_read: 1 } });
 });
 
-router.patch("/read-all", (req, res) => {
-  db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0").run(req.user.id);
+router.patch("/read-all", async (req, res) => {
+  await db.prepare("UPDATE notifications SET is_read = 1 WHERE user_id = ? AND is_read = 0").run(req.user.id);
   res.json({ success: true });
 });
 
