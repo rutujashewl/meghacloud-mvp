@@ -5,7 +5,7 @@ require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
 
-require("./db/init"); // creates the SQLite file + users table on boot
+const { initSchema } = require("./db/init"); // creates the SQLite file + users table on boot
 
 const authRoutes = require("./routes/auth");
 const serverRoutes = require("./routes/servers");
@@ -34,6 +34,13 @@ app.use((req, res) => {
   res.status(404).json({ error: "Not found" });
 });
 
-app.listen(PORT, () => {
-  console.log(`[server] MeghaCloud backend running on http://localhost:${PORT}`);
-});
+initSchema()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`[server] MeghaCloud backend running on http://localhost:${PORT}`);
+    });
+  })
+  .catch((err) => {
+    console.error("Database initialization failed:", err);
+    process.exit(1);
+  });
