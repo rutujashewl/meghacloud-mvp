@@ -14,7 +14,7 @@ const express = require("express");
 const PDFDocument = require("pdfkit");
 const { body, validationResult } = require("express-validator");
 
-const db = require("../db/init");
+const { db } = require("../db/init");
 const { requireAuth } = require("../middleware/auth");
 const { notify } = require("../services/notify");
 
@@ -23,20 +23,20 @@ router.use(requireAuth);
 
 const GST_RATE = 0.18;
 
-function ownedInvoice(id, userId) {
+async function ownedInvoice(id, userId) {
   return db.prepare("SELECT * FROM invoices WHERE id = ? AND user_id = ?").get(id, userId);
 }
 
-function nextInvoiceNumber() {
+async function nextInvoiceNumber() {
   const year = new Date().getFullYear();
-  const count = db.prepare("SELECT COUNT(*) as c FROM invoices WHERE invoice_number LIKE ?").get(`MC-${year}-%`);
-  const seq = String((count?.c || 0) + 1).padStart(3, "0");
+  const count = await db.prepare("SELECT COUNT(*) as c FROM invoices WHERE invoice_number LIKE ?").get(`MC-${year}-%`);
+  const seq = String((parseInt(count?.c, 10) || 0) + 1).padStart(3, "0");
   return `MC-${year}-${seq}`;
 }
 
 // ---------- GET /api/billing/invoices ----------
-router.get("/invoices", (req, res) => {
-  const invoices = db
+router.get("/invoices", async (req, res) => {
+  const invoices = await db
     .prepare("SELECT * FROM invoices WHERE user_id = ? ORDER BY created_at DESC")
     .all(req.user.id);
   res.json({ invoices });
@@ -45,8 +45,8 @@ router.get("/invoices", (req, res) => {
 // ---------- POST /api/billing/invoices/generate ----------
 // Generates an invoice from the sum of the user's currently-running servers'
 // monthly_cost. Meant to simulate a monthly billing cycle for MVP demo purposes.
-router.post("/invoices/generate", (req, res) => {
-  const servers = db
+router.post("/invoices/generate", async (req, res) => {
+  const servers = await db
     .prepare("SELECT * FROM servers WHERE user_id = ? AND status = 'running'")
     .all(req.user.id);
 
@@ -57,22 +57,22 @@ router.post("/invoices/generate", (req, res) => {
   const subtotal = servers.reduce((sum, s) => sum + s.monthly_cost, 0);
   const gst_amount = Math.round(subtotal * GST_RATE);
   const total_amount = subtotal + gst_amount;
-  const invoice_number = nextInvoiceNumber();
+  const invoice_number = await nextInvoiceNumber();
 
-  const result = db
+  const result = await db
     .prepare(
       `INSERT INTO invoices (user_id, invoice_number, subtotal, gst_amount, total_amount, status)
        VALUES (?, ?, ?, ?, ?, 'pending')`
     )
     .run(req.user.id, invoice_number, subtotal, gst_amount, total_amount);
 
-  const invoice = db.prepare("SELECT * FROM invoices WHERE id = ?").get(result.lastInsertRowid);
+  const invoice = await db.prepare("SELECT * FROM invoices WHERE id = ?").get(result.lastInsertRowid);
   res.status(201).json({ invoice });
 });
 
 // ---------- GET /api/billing/invoices/:id ----------
-router.get("/invoices/:id", (req, res) => {
-  const invoice = ownedInvoice(req.params.id, req.user.id);
+router.get("/invoices/:id", async (req, res) => {
+  const invoice = await ownedInvoice(req.params.id, req.user.id);
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
   res.json({ invoice });
 });
@@ -81,34 +81,34 @@ router.get("/invoices/:id", (req, res) => {
 router.post(
   "/invoices/:id/pay",
   [body("method").isIn(["upi", "razorpay"]).withMessage("Payment method must be upi or razorpay")],
-  (req, res) => {
+  async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const invoice = ownedInvoice(req.params.id, req.user.id);
+    const invoice = await ownedInvoice(req.params.id, req.user.id);
     if (!invoice) return res.status(404).json({ error: "Invoice not found" });
     if (invoice.status === "paid") {
       return res.status(409).json({ error: "Invoice is already paid" });
     }
 
-    db.prepare(
+    await db.prepare(
       `UPDATE invoices SET status = 'paid', payment_method = ?, paid_at = datetime('now') WHERE id = ?`
     ).run(req.body.method, invoice.id);
 
-    const updated = db.prepare("SELECT * FROM invoices WHERE id = ?").get(invoice.id);
-    notify(req.user.id, "payment_successful", updated);
+    const updated = await db.prepare("SELECT * FROM invoices WHERE id = ?").get(invoice.id);
+    await notify(req.user.id, "payment_successful", updated);
     res.json({ invoice: updated });
   }
 );
 
 // ---------- GET /api/billing/invoices/:id/pdf ----------
-router.get("/invoices/:id/pdf", (req, res) => {
-  const invoice = ownedInvoice(req.params.id, req.user.id);
+router.get("/invoices/:id/pdf", async (req, res) => {
+  const invoice = await ownedInvoice(req.params.id, req.user.id);
   if (!invoice) return res.status(404).json({ error: "Invoice not found" });
 
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+  const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
 
   res.setHeader("Content-Type", "application/pdf");
   res.setHeader("Content-Disposition", `attachment; filename="${invoice.invoice_number}.pdf"`);
