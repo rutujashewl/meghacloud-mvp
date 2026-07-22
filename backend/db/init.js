@@ -1,136 +1,147 @@
 // db/init.js
-// Sets up SQLite database and the `users` table for Phase 1 (Auth Foundation).
-// Later phases (servers, billing, notifications) will add their own tables here.
+// PostgreSQL version (was SQLite in earlier phases — see git history).
+// Keeps the exact same db.prepare(sql).get/all/run(...params) API that every
+// route file already uses, so route files did not need their SQL rewritten —
+// only `async`/`await` was added at call sites, because pg is async-only
+// (unlike node:sqlite, which was synchronous).
 
-const { DatabaseSync } = require("node:sqlite");
-const path = require("path");
-const fs = require("fs");
+const { Pool } = require("pg");
 
-const DB_PATH = process.env.DB_PATH || "./data/meghacloud.db";
-
-// Make sure the data/ folder exists before SQLite tries to write the file
-const dbDir = path.dirname(DB_PATH);
-if (!fs.existsSync(dbDir)) {
-  fs.mkdirSync(dbDir, { recursive: true });
+if (!process.env.DATABASE_URL) {
+  throw new Error(
+    "DATABASE_URL is not set. Set it to your Render PostgreSQL 'Internal Database URL' " +
+      "(or 'External Database URL' for local testing) in your .env file."
+  );
 }
 
-const conn = new DatabaseSync(DB_PATH);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  // Render (and most managed Postgres hosts) terminate TLS with a cert your
+  // local Node install won't have in its trust store — this is the standard,
+  // documented way to connect to Render Postgres from an external app.
+  ssl: process.env.PGSSL === "false" ? false : { rejectUnauthorized: false },
+});
 
-// Thin wrapper so route files can keep using the familiar
-// better-sqlite3-style API: db.prepare(sql).get/all/run(...params)
+pool.on("error", (err) => {
+  console.error("[db] Unexpected error on idle Postgres client", err);
+});
+
+// Translates the SQLite-flavored SQL our routes already contain into
+// Postgres-flavored SQL, transparently:
+//   - "?" positional placeholders  -> "$1", "$2", ...
+//   - "datetime('now')"            -> "NOW()"
+function toPgSql(sql) {
+  let i = 0;
+  return sql.replace(/datetime\('now'\)/gi, "NOW()").replace(/\?/g, () => `$${++i}`);
+}
+
+function isInsert(sql) {
+  return /^\s*INSERT INTO/i.test(sql);
+}
+
 const db = {
   prepare(sql) {
-    const stmt = conn.prepare(sql);
+    const pgSql = toPgSql(sql);
+    // Our routes read `result.lastInsertRowid` after INSERTs (a node:sqlite-ism).
+    // Postgres has no such field — RETURNING id gives us the same info, so we
+    // auto-append it to any INSERT that doesn't already have a RETURNING clause.
+    const runSql = isInsert(sql) && !/returning/i.test(sql) ? `${pgSql} RETURNING id` : pgSql;
+
     return {
-      get: (...params) => stmt.get(...params),
-      all: (...params) => stmt.all(...params),
-      run: (...params) => {
-        const info = stmt.run(...params);
-        return { lastInsertRowid: info.lastInsertRowid, changes: info.changes };
+      async get(...params) {
+        const res = await pool.query(pgSql, params);
+        return res.rows[0];
+      },
+      async all(...params) {
+        const res = await pool.query(pgSql, params);
+        return res.rows;
+      },
+      async run(...params) {
+        const res = await pool.query(runSql, params);
+        return { lastInsertRowid: res.rows[0]?.id, changes: res.rowCount };
       },
     };
   },
-  exec(sql) {
-    conn.exec(sql);
+  async exec(sql) {
+    await pool.query(sql);
   },
 };
 
-// --- users table ---
-// auth_provider: 'email' | 'google'
-// password_hash is NULL for google-only accounts
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    name          TEXT NOT NULL,
-    email         TEXT NOT NULL UNIQUE,
-    password_hash TEXT,
-    auth_provider TEXT NOT NULL DEFAULT 'email',
-    google_id     TEXT UNIQUE,
-    phone         TEXT,
-    deleted_at    TEXT,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
-  );
-`);
+// ---------------------------------------------------------------------------
+// Schema — same tables/columns as the SQLite version, translated to Postgres
+// types (SERIAL instead of INTEGER PRIMARY KEY AUTOINCREMENT, TIMESTAMPTZ
+// instead of TEXT-with-datetime()). Column names and meanings are unchanged.
+// ---------------------------------------------------------------------------
+async function initSchema() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS users (
+      id            SERIAL PRIMARY KEY,
+      name          TEXT NOT NULL,
+      email         TEXT NOT NULL UNIQUE,
+      password_hash TEXT,
+      auth_provider TEXT NOT NULL DEFAULT 'email',
+      google_id     TEXT UNIQUE,
+      phone         TEXT,
+      deleted_at    TIMESTAMPTZ,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
 
-// Safe migration: add deleted_at to a users table created before this column existed.
-try {
-  db.exec(`ALTER TABLE users ADD COLUMN deleted_at TEXT;`);
-} catch (e) {
-  // already exists — fine
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS servers (
+      id            SERIAL PRIMARY KEY,
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      name          TEXT NOT NULL,
+      os            TEXT NOT NULL,
+      size          TEXT NOT NULL,
+      region        TEXT NOT NULL DEFAULT 'Mumbai',
+      status        TEXT NOT NULL DEFAULT 'running',
+      monthly_cost  INTEGER NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS invoices (
+      id              SERIAL PRIMARY KEY,
+      user_id         INTEGER NOT NULL REFERENCES users(id),
+      invoice_number  TEXT NOT NULL UNIQUE,
+      subtotal        INTEGER NOT NULL,
+      gst_amount      INTEGER NOT NULL,
+      total_amount    INTEGER NOT NULL,
+      status          TEXT NOT NULL DEFAULT 'pending',
+      payment_method  TEXT,
+      created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      paid_at         TIMESTAMPTZ
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS notifications (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      type        TEXT NOT NULL,
+      title       TEXT NOT NULL,
+      message     TEXT NOT NULL,
+      is_read     INTEGER NOT NULL DEFAULT 0,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS email_log (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      to_email    TEXT NOT NULL,
+      subject     TEXT NOT NULL,
+      body        TEXT NOT NULL,
+      sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+
+  console.log("[db] PostgreSQL schema ready");
 }
 
-// --- servers table ---
-// status: 'running' | 'stopped'
-// v1.0 MVP: provisioning is simulated (no real OpenStack/VM boot yet, per TAD ADR-04 —
-// real hypervisor integration is a separate infra milestone). Status just flips in DB.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS servers (
-    id            INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id       INTEGER NOT NULL,
-    name          TEXT NOT NULL,
-    os            TEXT NOT NULL,
-    size          TEXT NOT NULL,
-    region        TEXT NOT NULL DEFAULT 'Mumbai',
-    status        TEXT NOT NULL DEFAULT 'running',
-    monthly_cost  INTEGER NOT NULL,
-    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-`);
-
-// --- invoices table ---
-// status: 'pending' | 'paid'
-// v1.0 MVP: payment is simulated (mark-as-paid) — real Razorpay/UPI webhook
-// integration per TAD Section 9.3 is a separate milestone needing live merchant keys.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS invoices (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id         INTEGER NOT NULL,
-    invoice_number  TEXT NOT NULL UNIQUE,
-    subtotal        INTEGER NOT NULL,
-    gst_amount      INTEGER NOT NULL,
-    total_amount    INTEGER NOT NULL,
-    status          TEXT NOT NULL DEFAULT 'pending',
-    payment_method  TEXT,
-    created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    paid_at         TEXT,
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-`);
-
-// --- notifications table ---
-// type: 'server_launched' | 'server_stopped' | 'payment_successful'
-db.exec(`
-  CREATE TABLE IF NOT EXISTS notifications (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    type        TEXT NOT NULL,
-    title       TEXT NOT NULL,
-    message     TEXT NOT NULL,
-    is_read     INTEGER NOT NULL DEFAULT 0,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-`);
-
-// --- email_log table ---
-// v1.0 MVP: no real SMTP configured yet, so "sending" an email just logs it here
-// (visible in Settings > Email Log for demo/verification purposes). Swap in a real
-// provider (SendGrid/SES) behind the same sendEmail() function when ready.
-db.exec(`
-  CREATE TABLE IF NOT EXISTS email_log (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    user_id     INTEGER NOT NULL,
-    to_email    TEXT NOT NULL,
-    subject     TEXT NOT NULL,
-    body        TEXT NOT NULL,
-    sent_at     TEXT NOT NULL DEFAULT (datetime('now')),
-    FOREIGN KEY (user_id) REFERENCES users(id)
-  );
-`);
-
-console.log(`[db] SQLite ready at ${DB_PATH} (using node:sqlite)`);
-
-module.exports = db;
+module.exports = { db, initSchema };
