@@ -12,7 +12,7 @@ const jwt = require("jsonwebtoken");
 const { body, validationResult } = require("express-validator");
 const { OAuth2Client } = require("google-auth-library");
 
-const db = require("../db/init");
+const { db } = require("../db/init");
 const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
@@ -40,7 +40,7 @@ router.post(
     body("email").isEmail().withMessage("Valid email is required").normalizeEmail(),
     body("password").isLength({ min: 8 }).withMessage("Password must be at least 8 characters"),
   ],
-  (req, res) => {
+  async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
@@ -48,21 +48,21 @@ router.post(
 
     const { name, email, password } = req.body;
 
-    const existing = db.prepare("SELECT id FROM users WHERE email = ?").get(email);
+    const existing = await db.prepare("SELECT id FROM users WHERE email = ?").get(email);
     if (existing) {
       return res.status(409).json({ error: "An account with this email already exists" });
     }
 
     const password_hash = bcrypt.hashSync(password, 10);
 
-    const result = db
+    const result = await db
       .prepare(
         `INSERT INTO users (name, email, password_hash, auth_provider)
          VALUES (?, ?, ?, 'email')`
       )
       .run(name, email, password_hash);
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
+    const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
     const token = signToken(user);
 
     res.status(201).json({ token, user: publicUser(user) });
@@ -76,14 +76,14 @@ router.post(
     body("email").isEmail().withMessage("Valid email is required").normalizeEmail(),
     body("password").notEmpty().withMessage("Password is required"),
   ],
-  (req, res) => {
+  async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
     const { email, password } = req.body;
-    const user = db.prepare("SELECT * FROM users WHERE email = ?").get(email);
+    const user = await db.prepare("SELECT * FROM users WHERE email = ?").get(email);
 
     if (!user || !user.password_hash) {
       // Either no account, or a Google-only account with no password set
@@ -119,23 +119,23 @@ router.post("/google", async (req, res) => {
     });
     const payload = ticket.getPayload(); // { sub, email, name, picture, ... }
 
-    let user = db.prepare("SELECT * FROM users WHERE google_id = ? OR email = ?").get(
+    let user = await db.prepare("SELECT * FROM users WHERE google_id = ? OR email = ?").get(
       payload.sub,
       payload.email
     );
 
     if (!user) {
-      const result = db
+      const result = await db
         .prepare(
           `INSERT INTO users (name, email, auth_provider, google_id)
            VALUES (?, ?, 'google', ?)`
         )
         .run(payload.name || payload.email, payload.email, payload.sub);
-      user = db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
+      user = await db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
     } else if (!user.google_id) {
       // existing email/password account signing in with Google for the first time
-      db.prepare("UPDATE users SET google_id = ? WHERE id = ?").run(payload.sub, user.id);
-      user = db.prepare("SELECT * FROM users WHERE id = ?").get(user.id);
+      await db.prepare("UPDATE users SET google_id = ? WHERE id = ?").run(payload.sub, user.id);
+      user = await db.prepare("SELECT * FROM users WHERE id = ?").get(user.id);
     }
 
     if (user.deleted_at) {
@@ -151,8 +151,8 @@ router.post("/google", async (req, res) => {
 });
 
 // ---------- GET /api/auth/me ----------
-router.get("/me", requireAuth, (req, res) => {
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+router.get("/me", requireAuth, async (req, res) => {
+  const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
   if (!user || user.deleted_at) return res.status(404).json({ error: "User not found" });
   res.json({ user: publicUser(user) });
 });
@@ -166,44 +166,41 @@ router.patch(
     body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
     body("phone").optional().trim(),
   ],
-  (req, res) => {
+  async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const existing = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+    const existing = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
     if (!existing) return res.status(404).json({ error: "User not found" });
 
     const name = req.body.name ?? existing.name;
     const phone = req.body.phone ?? existing.phone;
 
-    db.prepare(
+    await db.prepare(
       `UPDATE users SET name = ?, phone = ?, updated_at = datetime('now') WHERE id = ?`
     ).run(name, phone, req.user.id);
 
-    const updated = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+    const updated = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
     res.json({ user: publicUser(updated) });
   }
 );
 
 // ---------- PATCH /api/auth/password ----------
-// Change password. If the account already has a password, the current one must be
-// verified first. Google-only accounts (no password_hash yet) can set one directly —
-// this is how a Google-signed-up user adds email/password as a second sign-in method.
 router.patch(
   "/password",
   requireAuth,
   [
     body("newPassword").isLength({ min: 8 }).withMessage("New password must be at least 8 characters"),
   ],
-  (req, res) => {
+  async (req, res) => {
     const errors = validationResult(req);
     if (!errors.isEmpty()) {
       return res.status(400).json({ error: errors.array()[0].msg });
     }
 
-    const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+    const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
     if (!user) return res.status(404).json({ error: "User not found" });
 
     if (user.password_hash) {
@@ -214,7 +211,7 @@ router.patch(
     }
 
     const newHash = bcrypt.hashSync(req.body.newPassword, 10);
-    db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(
+    await db.prepare("UPDATE users SET password_hash = ?, updated_at = datetime('now') WHERE id = ?").run(
       newHash,
       user.id
     );
@@ -224,12 +221,8 @@ router.patch(
 );
 
 // ---------- DELETE /api/auth/me ----------
-// Soft delete: marks the account deleted_at rather than removing the row, so billing/
-// server history stays intact for records (per TAD's audit-trail requirements). A
-// deleted account can no longer log in. Requires password confirmation for email
-// accounts as a safety check against accidental/malicious calls with a stolen token.
-router.delete("/me", requireAuth, (req, res) => {
-  const user = db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
+router.delete("/me", requireAuth, async (req, res) => {
+  const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
   if (!user) return res.status(404).json({ error: "User not found" });
 
   if (user.password_hash) {
@@ -239,7 +232,7 @@ router.delete("/me", requireAuth, (req, res) => {
     }
   }
 
-  db.prepare("UPDATE users SET deleted_at = datetime('now') WHERE id = ?").run(user.id);
+  await db.prepare("UPDATE users SET deleted_at = datetime('now') WHERE id = ?").run(user.id);
   res.json({ success: true });
 });
 
