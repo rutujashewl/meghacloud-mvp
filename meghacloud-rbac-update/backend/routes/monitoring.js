@@ -88,13 +88,13 @@ function buildIncidents(baseSeed, isRunning) {
   ];
 }
 
-async function ownedServer(id, userId) {
-  return db.prepare("SELECT * FROM servers WHERE id = ? AND user_id = ?").get(id, userId);
+async function orgServer(id, orgId) {
+  return db.prepare("SELECT * FROM servers WHERE id = ? AND org_id = ?").get(id, orgId);
 }
 
 // ---------- GET /api/servers/:id/monitoring ----------
 router.get("/:id/monitoring", async (req, res) => {
-  const server = await ownedServer(req.params.id, req.user.id);
+  const server = await orgServer(req.params.id, req.user.orgId);
   if (!server) return res.status(404).json({ error: "Server not found" });
 
   res.json(buildMetrics(server));
