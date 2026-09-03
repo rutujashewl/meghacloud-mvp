@@ -57,5 +57,11 @@ func readServer(ctx context.Context, d *schema.ResourceData, meta interface{}) d
 	if err == os.ErrNotExist { d.SetId(""); return nil }; if err != nil { return diag.Errorf("read server: %v", err) }
 	for _, field := range []string{"name", "os", "size", "region", "status"} { if value, ok := result.Server[field]; ok { _ = d.Set(field, value) } }; return nil
 }
-func updateServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics { return readServer(ctx, d, meta) }
+func updateServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics {
+	if d.HasChanges("name", "os", "size", "region") {
+		payload := map[string]string{"name": d.Get("name").(string), "os": d.Get("os").(string), "size": d.Get("size").(string), "region": d.Get("region").(string)}
+		if err := request(meta.(*apiClient), http.MethodPatch, "/servers/"+d.Id(), payload, nil); err != nil { return diag.Errorf("update server: %v", err) }
+	}
+	return readServer(ctx, d, meta)
+}
 func deleteServer(ctx context.Context, d *schema.ResourceData, meta interface{}) diag.Diagnostics { err := request(meta.(*apiClient), http.MethodDelete, "/servers/"+d.Id(), nil, nil); if err != nil && err != os.ErrNotExist { return diag.Errorf("delete server: %v", err) }; d.SetId(""); return nil }

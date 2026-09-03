@@ -69,6 +69,22 @@ router.post(
   }
 );
 
+router.patch("/:id", [
+  body("name").trim().notEmpty().withMessage("Server name is required"),
+  body("os").isIn(OS_OPTIONS).withMessage("Invalid OS selection"),
+  body("size").isIn(Object.keys(SIZES)).withMessage("Invalid size selection"),
+  body("region").isIn(REGIONS).withMessage("Invalid region"),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+  const server = await ownedServer(req.params.id, req.user.id);
+  if (!server) return res.status(404).json({ error: "Server not found" });
+  await db.prepare(
+    `UPDATE servers SET name = ?, os = ?, size = ?, region = ?, monthly_cost = ?, updated_at = datetime('now') WHERE id = ?`
+  ).run(req.body.name, req.body.os, req.body.size, req.body.region, priceFor(req.body.size), server.id);
+  res.json({ server: await db.prepare("SELECT * FROM servers WHERE id = ?").get(server.id) });
+});
+
 // ---------- GET /api/servers/:id ----------
 router.get("/:id", async (req, res) => {
   const server = await ownedServer(req.params.id, req.user.id);
