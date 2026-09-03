@@ -20,9 +20,31 @@ const { requireAuth } = require("../middleware/auth");
 const { notify } = require("../services/notify");
 
 const router = express.Router();
-router.use(requireAuth);
 
 const GST_RATE = 0.18;
+
+router.post("/webhook", async (req, res) => {
+  const signature = req.headers["x-razorpay-signature"];
+  const secret = process.env.RAZORPAY_WEBHOOK_SECRET;
+  if (!signature || !secret || !Buffer.isBuffer(req.body)) return res.status(400).json({ error: "Invalid webhook configuration" });
+  const expected = crypto.createHmac("sha256", secret).update(req.body).digest("hex");
+  if (expected.length !== signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(signature))) return res.status(400).json({ error: "Invalid webhook signature" });
+  let event;
+  try { event = JSON.parse(req.body.toString("utf8")); } catch { return res.status(400).json({ error: "Invalid webhook payload" }); }
+  if (event.event !== "payment.captured") return res.json({ received: true });
+  const payment = event.payload?.payment?.entity;
+  if (!payment?.order_id) return res.status(400).json({ error: "Missing payment order ID" });
+  const invoice = await db.prepare("SELECT * FROM invoices WHERE razorpay_order_id = ?").get(payment.order_id);
+  if (!invoice) return res.status(404).json({ error: "Invoice not found for payment order" });
+  if (invoice.status !== "paid") {
+    await db.prepare("UPDATE invoices SET status = 'paid', payment_method = 'razorpay', razorpay_payment_id = ?, paid_at = datetime('now') WHERE id = ?").run(payment.id, invoice.id);
+    const updated = await db.prepare("SELECT * FROM invoices WHERE id = ?").get(invoice.id);
+    await notify(invoice.user_id, "payment_successful", updated);
+  }
+  res.json({ received: true });
+});
+
+router.use(requireAuth);
 
 function razorpayClient() {
   if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return null;
@@ -38,6 +60,7 @@ router.post("/invoices/:id/razorpay/order", async (req, res) => {
   if (invoice.status === "paid") return res.status(409).json({ error: "Invoice is already paid" });
   try {
     const order = await razorpay.orders.create({ amount: invoice.total_amount * 100, currency: "INR", receipt: invoice.invoice_number });
+    await db.prepare("UPDATE invoices SET razorpay_order_id = ? WHERE id = ?").run(order.id, invoice.id);
     res.json({ order, keyId: process.env.RAZORPAY_KEY_ID, invoiceId: invoice.id });
   } catch (error) {
     console.error("[razorpay/order] failed:", error.message);
@@ -59,7 +82,7 @@ router.post("/invoices/:id/razorpay/verify", [
   if (expected.length !== req.body.razorpay_signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.body.razorpay_signature))) {
     return res.status(400).json({ error: "Invalid Razorpay payment signature" });
   }
-  await db.prepare("UPDATE invoices SET status = 'paid', payment_method = 'razorpay', paid_at = datetime('now') WHERE id = ?").run(invoice.id);
+  await db.prepare("UPDATE invoices SET status = 'paid', payment_method = 'razorpay', razorpay_order_id = ?, razorpay_payment_id = ?, paid_at = datetime('now') WHERE id = ?").run(req.body.razorpay_order_id, req.body.razorpay_payment_id, invoice.id);
   const updated = await db.prepare("SELECT * FROM invoices WHERE id = ?").get(invoice.id);
   await notify(req.user.id, "payment_successful", updated);
   res.json({ invoice: updated });

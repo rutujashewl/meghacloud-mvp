@@ -131,6 +131,8 @@ async function initSchema() {
     );
   `);
   await db.exec(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
+  await db.exec(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS razorpay_order_id TEXT;`);
+  await db.exec(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS razorpay_payment_id TEXT;`);
   await db.exec(`UPDATE invoices SET org_id = user_id WHERE org_id IS NULL;`);
 
   await db.exec(`

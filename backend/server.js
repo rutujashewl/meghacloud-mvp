@@ -20,6 +20,7 @@ const app = express();
 const PORT = process.env.PORT || 4000;
 
 app.use(cors());
+app.use("/api/billing/webhook", express.raw({ type: "application/json" }));
 app.use(express.json());
 
 app.get("/api/health", (req, res) => {
