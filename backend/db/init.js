@@ -117,6 +117,24 @@ async function initSchema() {
   await db.exec(`UPDATE servers SET org_id = user_id WHERE org_id IS NULL;`);
 
   await db.exec(`
+    CREATE TABLE IF NOT EXISTS managed_databases (
+      id            SERIAL PRIMARY KEY,
+      user_id       INTEGER NOT NULL REFERENCES users(id),
+      name          TEXT NOT NULL,
+      engine        TEXT NOT NULL,
+      version       TEXT NOT NULL,
+      size          TEXT NOT NULL,
+      region        TEXT NOT NULL DEFAULT 'Mumbai',
+      status        TEXT NOT NULL DEFAULT 'available',
+      monthly_cost  INTEGER NOT NULL,
+      created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await db.exec(`ALTER TABLE managed_databases ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
+  await db.exec(`UPDATE managed_databases SET org_id = user_id WHERE org_id IS NULL;`);
+
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS invoices (
       id              SERIAL PRIMARY KEY,
       user_id         INTEGER NOT NULL REFERENCES users(id),
