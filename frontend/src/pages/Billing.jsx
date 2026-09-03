@@ -67,6 +67,34 @@ export default function Billing() {
     setError("");
     setMessage("");
     try {
+      if (method === "razorpay") {
+        const orderData = await billingApi.createRazorpayOrder(id);
+        await new Promise((resolve, reject) => {
+          const script = document.createElement("script");
+          script.src = "https://checkout.razorpay.com/v1/checkout.js";
+          script.onload = resolve;
+          script.onerror = () => reject(new Error("Could not load Razorpay Checkout"));
+          document.body.appendChild(script);
+        });
+        const payment = await new Promise((resolve, reject) => {
+          const checkout = new window.Razorpay({
+            key: orderData.keyId,
+            amount: orderData.order.amount,
+            currency: orderData.order.currency,
+            name: "MeghaCloud",
+            description: `Invoice ${orderData.order.receipt}`,
+            order_id: orderData.order.id,
+            handler: resolve,
+            modal: { ondismiss: () => reject(new Error("Payment cancelled")) },
+          });
+          checkout.open();
+        });
+        const updated = await billingApi.verifyRazorpayPayment(id, payment);
+        setInvoices((prev) => prev.map((i) => (i.id === id ? updated : i)));
+        setMessage("Payment successful via Razorpay");
+        setPayingId(null);
+        return;
+      }
       const updated = await billingApi.payInvoice(id, method);
       setInvoices((prev) => prev.map((i) => (i.id === id ? updated : i)));
       setMessage(`Payment successful via ${method === "upi" ? "UPI" : "Razorpay"}`);

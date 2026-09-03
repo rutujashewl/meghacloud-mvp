@@ -10,6 +10,7 @@ import Billing from "./pages/Billing";
 import Monitoring from "./pages/Monitoring";
 import Team from "./pages/Team";
 import { LanguageProvider } from "./context/LanguageContext";
+import Compliance from "./pages/Compliance";
 
 export default function App() {
   return (
@@ -59,6 +60,7 @@ export default function App() {
           }
         />
         <Route path="/team" element={<ProtectedRoute><Team /></ProtectedRoute>} />
+        <Route path="/compliance" element={<ProtectedRoute><Compliance /></ProtectedRoute>} />
       </Routes>
       </LanguageProvider>
     </AuthProvider>

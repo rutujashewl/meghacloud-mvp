@@ -31,6 +31,7 @@ export default function Profile() {
   // --- Profile info form ---
   const [name, setName] = useState(user?.name || "");
   const [phone, setPhone] = useState(user?.phone || "");
+  const [gstin, setGstin] = useState(user?.gstin || "");
   const [saving, setSaving] = useState(false);
   const [profileMessage, setProfileMessage] = useState("");
   const [profileError, setProfileError] = useState("");
@@ -41,7 +42,7 @@ export default function Profile() {
     setProfileMessage("");
     setProfileError("");
     try {
-      await updateProfile({ name, phone });
+      await updateProfile({ name, phone, gstin });
       setProfileMessage("Profile updated");
     } catch (err) {
       setProfileError(err.message);
@@ -149,6 +150,11 @@ export default function Profile() {
               Email Address
               <input value={user?.email || ""} disabled />
               <span className="hint">Email cannot be changed for this account.</span>
+            </label>
+
+            <label>
+              GSTIN
+              <input value={gstin} onChange={(e) => setGstin(e.target.value.toUpperCase())} placeholder="22AAAAA0000A1Z5" maxLength={15} />
             </label>
 
             <label>

@@ -80,6 +80,7 @@ export default function Dashboard() {
           <Link to="/billing" className="btn btn-ghost">{t.billing}</Link>
           <Link to="/settings" className="btn btn-ghost">{t.settings}</Link>
           <Link to="/team" className="btn btn-ghost">{t.team}</Link>
+          <Link to="/compliance" className="btn btn-ghost">Compliance</Link>
           <LanguageToggle />
           <NotificationBell />
           <button className="btn btn-ghost" onClick={logout}>{t.logout}</button>
