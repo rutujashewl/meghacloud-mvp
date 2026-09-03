@@ -40,7 +40,7 @@ async function sendEmail(userId, toEmail, subject, body) {
 
 async function sendWhatsApp(userId, phone, message) {
   await db.prepare(
-    `INSERT INTO whatsapp_log (user_id, phone, message) VALUES (?, ?, ?)`
+    `INSERT INTO whatsapp_log (user_id, to_phone, message, status) VALUES (?, ?, ?, 'sent')`
   ).run(userId, phone, message);
   console.log(`[whatsapp:simulated] to=${phone}`);
 }

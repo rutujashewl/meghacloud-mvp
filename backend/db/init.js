@@ -16,6 +16,10 @@ if (!process.env.DATABASE_URL) {
 
 const pool = new Pool({
   connectionString: process.env.DATABASE_URL,
+  max: Number(process.env.PG_POOL_MAX || 5),
+  idleTimeoutMillis: Number(process.env.PG_IDLE_TIMEOUT_MS || 10000),
+  connectionTimeoutMillis: Number(process.env.PG_CONNECTION_TIMEOUT_MS || 10000),
+  keepAlive: true,
   // Render (and most managed Postgres hosts) terminate TLS with a cert your
   // local Node install won't have in its trust store — this is the standard,
   // documented way to connect to Render Postgres from an external app.
@@ -92,6 +96,7 @@ async function initSchema() {
   await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
   await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upi_id TEXT;`);
   await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS autopay_enabled BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS gstin TEXT;`);
   await db.exec(`UPDATE users SET org_id = id WHERE org_id IS NULL;`);
 
   await db.exec(`
@@ -155,8 +160,9 @@ async function initSchema() {
     CREATE TABLE IF NOT EXISTS whatsapp_log (
       id          SERIAL PRIMARY KEY,
       user_id     INTEGER NOT NULL REFERENCES users(id),
-      phone       TEXT NOT NULL,
+      to_phone    TEXT NOT NULL,
       message     TEXT NOT NULL,
+      status      TEXT NOT NULL DEFAULT 'sent',
       sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);

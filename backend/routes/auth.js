@@ -17,6 +17,7 @@ const { requireAuth } = require("../middleware/auth");
 
 const router = express.Router();
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
+const GSTIN_PATTERN = /^[0-9]{2}[A-Z]{5}[0-9]{4}[A-Z][1-9A-Z]Z[0-9A-Z]$/;
 
 function signToken(user) {
   return jwt.sign(
@@ -167,6 +168,7 @@ router.patch(
   [
     body("name").optional().trim().notEmpty().withMessage("Name cannot be empty"),
     body("phone").optional().trim(),
+    body("gstin").optional({ values: "null" }).trim().custom((value) => !value || GSTIN_PATTERN.test(value.toUpperCase())).withMessage("Enter a valid GSTIN"),
   ],
   async (req, res) => {
     const errors = validationResult(req);
@@ -179,10 +181,11 @@ router.patch(
 
     const name = req.body.name ?? existing.name;
     const phone = req.body.phone ?? existing.phone;
+    const gstin = req.body.gstin === undefined ? existing.gstin : (req.body.gstin || null).toUpperCase();
 
     await db.prepare(
-      `UPDATE users SET name = ?, phone = ?, updated_at = datetime('now') WHERE id = ?`
-    ).run(name, phone, req.user.id);
+      `UPDATE users SET name = ?, phone = ?, gstin = ?, updated_at = datetime('now') WHERE id = ?`
+    ).run(name, phone, gstin, req.user.id);
 
     const updated = await db.prepare("SELECT * FROM users WHERE id = ?").get(req.user.id);
     res.json({ user: publicUser(updated) });

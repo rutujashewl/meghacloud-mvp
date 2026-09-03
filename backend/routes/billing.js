@@ -11,6 +11,7 @@
 // is a separate milestone requiring live merchant credentials.
 
 const express = require("express");
+const crypto = require("crypto");
 const PDFDocument = require("pdfkit");
 const { body, validationResult } = require("express-validator");
 
@@ -22,6 +23,47 @@ const router = express.Router();
 router.use(requireAuth);
 
 const GST_RATE = 0.18;
+
+function razorpayClient() {
+  if (!process.env.RAZORPAY_KEY_ID || !process.env.RAZORPAY_KEY_SECRET) return null;
+  const Razorpay = require("razorpay");
+  return new Razorpay({ key_id: process.env.RAZORPAY_KEY_ID, key_secret: process.env.RAZORPAY_KEY_SECRET });
+}
+
+router.post("/invoices/:id/razorpay/order", async (req, res) => {
+  const razorpay = razorpayClient();
+  if (!razorpay) return res.status(503).json({ error: "Razorpay is not configured" });
+  const invoice = await ownedInvoice(req.params.id, req.user.id);
+  if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+  if (invoice.status === "paid") return res.status(409).json({ error: "Invoice is already paid" });
+  try {
+    const order = await razorpay.orders.create({ amount: invoice.total_amount * 100, currency: "INR", receipt: invoice.invoice_number });
+    res.json({ order, keyId: process.env.RAZORPAY_KEY_ID, invoiceId: invoice.id });
+  } catch (error) {
+    console.error("[razorpay/order] failed:", error.message);
+    res.status(502).json({ error: "Could not create Razorpay order" });
+  }
+});
+
+router.post("/invoices/:id/razorpay/verify", [
+  body("razorpay_order_id").trim().notEmpty(),
+  body("razorpay_payment_id").trim().notEmpty(),
+  body("razorpay_signature").trim().notEmpty(),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: "Razorpay payment details are required" });
+  const invoice = await ownedInvoice(req.params.id, req.user.id);
+  if (!invoice) return res.status(404).json({ error: "Invoice not found" });
+  const payload = `${req.body.razorpay_order_id}|${req.body.razorpay_payment_id}`;
+  const expected = crypto.createHmac("sha256", process.env.RAZORPAY_KEY_SECRET || "").update(payload).digest("hex");
+  if (expected.length !== req.body.razorpay_signature.length || !crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(req.body.razorpay_signature))) {
+    return res.status(400).json({ error: "Invalid Razorpay payment signature" });
+  }
+  await db.prepare("UPDATE invoices SET status = 'paid', payment_method = 'razorpay', paid_at = datetime('now') WHERE id = ?").run(invoice.id);
+  const updated = await db.prepare("SELECT * FROM invoices WHERE id = ?").get(invoice.id);
+  await notify(req.user.id, "payment_successful", updated);
+  res.json({ invoice: updated });
+});
 
 router.get("/autopay", async (req, res) => {
   const user = await db.prepare("SELECT upi_id, autopay_enabled FROM users WHERE id = ?").get(req.user.id);
@@ -149,6 +191,7 @@ router.get("/invoices/:id/pdf", async (req, res) => {
 
   doc.text(`Billed To: ${user.name}`);
   doc.text(`Email: ${user.email}`);
+  if (user.gstin) doc.text(`GSTIN: ${user.gstin}`);
   doc.moveDown(1.5);
 
   // Table header
@@ -164,7 +207,7 @@ router.get("/invoices/:id/pdf", async (req, res) => {
   doc.text(invoice.subtotal.toLocaleString("en-IN"), 460, rowY);
 
   rowY += 22;
-  doc.text("GST (18%)", 60, rowY);
+  doc.text("CGST (9%) + SGST (9%)", 60, rowY);
   doc.text(invoice.gst_amount.toLocaleString("en-IN"), 460, rowY);
 
   rowY += 8;
