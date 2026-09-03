@@ -12,6 +12,8 @@ const serverRoutes = require("./routes/servers");
 const billingRoutes = require("./routes/billing");
 const monitoringRoutes = require("./routes/monitoring");
 const notificationRoutes = require("./routes/notifications");
+const teamRoutes = require("./routes/team");
+const apiKeyRoutes = require("./routes/apiKeys");
 
 const app = express();
 const PORT = process.env.PORT || 4000;
@@ -28,6 +30,8 @@ app.use("/api/servers", serverRoutes);
 app.use("/api/servers", monitoringRoutes);
 app.use("/api/billing", billingRoutes);
 app.use("/api/notifications", notificationRoutes);
+app.use("/api/team", teamRoutes);
+app.use("/api/keys", apiKeyRoutes);
 
 // fallback 404
 app.use((req, res) => {

@@ -8,10 +8,13 @@ import Dashboard from "./pages/Dashboard";
 import LaunchServer from "./pages/LaunchServer";
 import Billing from "./pages/Billing";
 import Monitoring from "./pages/Monitoring";
+import Team from "./pages/Team";
+import { LanguageProvider } from "./context/LanguageContext";
 
 export default function App() {
   return (
     <AuthProvider>
+      <LanguageProvider>
       <Routes>
         <Route path="/login" element={<Login />} />
         <Route path="/register" element={<Register />} />
@@ -55,7 +58,9 @@ export default function App() {
             </ProtectedRoute>
           }
         />
+        <Route path="/team" element={<ProtectedRoute><Team /></ProtectedRoute>} />
       </Routes>
+      </LanguageProvider>
     </AuthProvider>
   );
 }

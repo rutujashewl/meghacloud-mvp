@@ -7,7 +7,7 @@
 // rest of the app (routes) unaware of whether email is "real" or simulated, so
 // swapping in a real provider (SendGrid/SES) later only touches this one file.
 
-const db = require("../db/init");
+const { db } = require("../db/init");
 
 const TEMPLATES = {
   server_launched: (server) => ({
@@ -30,12 +30,19 @@ const TEMPLATES = {
   }),
 };
 
-function sendEmail(userId, toEmail, subject, body) {
+async function sendEmail(userId, toEmail, subject, body) {
   // Simulated send — see file header. Swap this body out for a real provider call later.
-  db.prepare(
+  await db.prepare(
     `INSERT INTO email_log (user_id, to_email, subject, body) VALUES (?, ?, ?, ?)`
   ).run(userId, toEmail, subject, body);
   console.log(`[email:simulated] to=${toEmail} subject="${subject}"`);
+}
+
+async function sendWhatsApp(userId, phone, message) {
+  await db.prepare(
+    `INSERT INTO whatsapp_log (user_id, phone, message) VALUES (?, ?, ?)`
+  ).run(userId, phone, message);
+  console.log(`[whatsapp:simulated] to=${phone}`);
 }
 
 /**
@@ -44,18 +51,21 @@ function sendEmail(userId, toEmail, subject, body) {
  * @param {string} type - one of the TEMPLATES keys
  * @param {object} payload - the server or invoice object the template needs
  */
-function notify(userId, type, payload) {
+async function notify(userId, type, payload) {
   const template = TEMPLATES[type];
   if (!template) throw new Error(`Unknown notification type: ${type}`);
 
   const { title, message, emailSubject, emailBody } = template(payload);
 
-  db.prepare(
+  await db.prepare(
     `INSERT INTO notifications (user_id, type, title, message) VALUES (?, ?, ?, ?)`
   ).run(userId, type, title, message);
 
-  const user = db.prepare("SELECT email FROM users WHERE id = ?").get(userId);
-  if (user) sendEmail(userId, user.email, emailSubject, emailBody);
+  const user = await db.prepare("SELECT email, phone FROM users WHERE id = ?").get(userId);
+  if (user) {
+    await sendEmail(userId, user.email, emailSubject, emailBody);
+    if (user.phone) await sendWhatsApp(userId, user.phone, message);
+  }
 }
 
 module.exports = { notify };

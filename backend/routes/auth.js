@@ -63,6 +63,8 @@ router.post(
       .run(name, email, password_hash);
 
     const user = await db.prepare("SELECT * FROM users WHERE id = ?").get(result.lastInsertRowid);
+    await db.prepare("UPDATE users SET org_id = id WHERE id = ?").run(user.id);
+    user.org_id = user.id;
     const token = signToken(user);
 
     res.status(201).json({ token, user: publicUser(user) });

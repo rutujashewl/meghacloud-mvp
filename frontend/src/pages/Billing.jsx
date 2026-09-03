@@ -19,10 +19,21 @@ export default function Billing() {
   const [busyId, setBusyId] = useState(null);
   const [generating, setGenerating] = useState(false);
   const [payingId, setPayingId] = useState(null); // invoice id currently showing method picker
+  const [autopay, setAutopay] = useState({ upi_id: "", autopay_enabled: false });
+  const [savingAutopay, setSavingAutopay] = useState(false);
 
   useEffect(() => {
     refresh();
+    client.get("/billing/autopay").then(({ data }) => setAutopay(data.autopay)).catch(() => {});
   }, []);
+
+  async function saveAutopay() {
+    setSavingAutopay(true); setError("");
+    try {
+      const { data } = await client.put("/billing/autopay", autopay);
+      setAutopay(data.autopay); setMessage(data.autopay.autopay_enabled ? "UPI AutoPay enabled" : "UPI AutoPay disabled");
+    } catch (err) { setError(err.message); } finally { setSavingAutopay(false); }
+  }
 
   async function refresh() {
     setLoading(true);
@@ -111,6 +122,16 @@ export default function Billing() {
 
         {message && <div className="form-success">{message}</div>}
         {error && <div className="form-error">{error}</div>}
+
+        <div className="card" style={{ marginBottom: 20 }}>
+          <h2>UPI AutoPay</h2>
+          <p className="text-muted">Simulated recurring payment for future invoices.</p>
+          <div className="form-row">
+            <input placeholder="yourname@upi" value={autopay.upi_id || ""} onChange={(e) => setAutopay({ ...autopay, upi_id: e.target.value })} />
+            <label><input type="checkbox" checked={Boolean(autopay.autopay_enabled)} onChange={(e) => setAutopay({ ...autopay, autopay_enabled: e.target.checked })} /> Enable AutoPay</label>
+            <button className="btn btn-primary" onClick={saveAutopay} disabled={savingAutopay}>{savingAutopay ? "Saving..." : "Save AutoPay"}</button>
+          </div>
+        </div>
 
         <div className="card card--table">
           <h2>Invoices</h2>

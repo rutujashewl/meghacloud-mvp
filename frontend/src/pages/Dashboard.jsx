@@ -3,6 +3,8 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import * as serversApi from "../api/servers";
 import NotificationBell from "../components/NotificationBell";
+import LanguageToggle from "../components/LanguageToggle";
+import { useLanguage } from "../context/LanguageContext";
 
 const STATUS_STYLES = {
   running: { bg: "#F0FDF4", color: "#15803D", label: "Running" },
@@ -11,6 +13,7 @@ const STATUS_STYLES = {
 
 export default function Dashboard() {
   const { user, logout } = useAuth();
+  const { t, language } = useLanguage();
   const [servers, setServers] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -73,11 +76,13 @@ export default function Dashboard() {
           <span className="brand-name">MeghaCloud</span>
         </div>
         <nav className="topnav">
-          <Link to="/monitoring" className="btn btn-ghost">Monitoring</Link>
-          <Link to="/billing" className="btn btn-ghost">Billing</Link>
-          <Link to="/settings" className="btn btn-ghost">Settings</Link>
+          <Link to="/monitoring" className="btn btn-ghost">{t.monitoring}</Link>
+          <Link to="/billing" className="btn btn-ghost">{t.billing}</Link>
+          <Link to="/settings" className="btn btn-ghost">{t.settings}</Link>
+          <Link to="/team" className="btn btn-ghost">{t.team}</Link>
+          <LanguageToggle />
           <NotificationBell />
-          <button className="btn btn-ghost" onClick={logout}>Logout</button>
+          <button className="btn btn-ghost" onClick={logout}>{t.logout}</button>
         </nav>
       </header>
 
@@ -87,20 +92,20 @@ export default function Dashboard() {
             <h1>Namaste, {user?.name?.split(" ")[0] || "there"}</h1>
             <p className="subtitle">Here's a simplified view of your cloud infrastructure in India.</p>
           </div>
-          <Link to="/servers/launch" className="btn btn-primary">+ Launch New Server</Link>
+          <Link to="/servers/launch" className="btn btn-primary">{t.launch}</Link>
         </div>
 
         <div className="stat-row">
           <div className="stat-card">
-            <span className="stat-label">Active Servers</span>
+            <span className="stat-label">{t.active}</span>
             <span className="stat-value">{servers.filter((s) => s.status === "running").length}</span>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Total Servers</span>
+            <span className="stat-label">{t.total}</span>
             <span className="stat-value">{servers.length}</span>
           </div>
           <div className="stat-card">
-            <span className="stat-label">Running Monthly Cost</span>
+            <span className="stat-label">{t.cost}</span>
             <span className="stat-value">₹{totalMonthly.toLocaleString("en-IN")}</span>
           </div>
         </div>
@@ -108,7 +113,7 @@ export default function Dashboard() {
         {error && <div className="form-error">{error}</div>}
 
         <div className="card card--table">
-          <h2>Your Servers</h2>
+          <h2>{t.servers}</h2>
 
           {loading ? (
             <p className="text-muted">Loading servers…</p>

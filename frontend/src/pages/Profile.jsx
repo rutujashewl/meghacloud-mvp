@@ -1,12 +1,32 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { useAuth } from "../context/AuthContext";
 import * as authApi from "../api/auth";
 import NotificationBell from "../components/NotificationBell";
+import * as apiKeys from "../api/apiKeys";
 
 export default function Profile() {
   const { user, updateProfile, logout } = useAuth();
   const navigate = useNavigate();
+  const [keys, setKeys] = useState([]);
+  const [keyName, setKeyName] = useState("");
+  const [newSecret, setNewSecret] = useState("");
+  const [keyError, setKeyError] = useState("");
+
+  useEffect(() => { apiKeys.listApiKeys().then(setKeys).catch((err) => setKeyError(err.message)); }, []);
+
+  async function handleCreateKey(e) {
+    e.preventDefault(); setKeyError(""); setNewSecret("");
+    try {
+      const result = await apiKeys.createApiKey(keyName);
+      setKeys((current) => [result.key, ...current]); setNewSecret(result.secret); setKeyName("");
+    } catch (err) { setKeyError(err.message); }
+  }
+
+  async function handleRevokeKey(id) {
+    try { await apiKeys.revokeApiKey(id); setKeys((current) => current.map((key) => key.id === id ? { ...key, revoked_at: new Date().toISOString() } : key)); }
+    catch (err) { setKeyError(err.message); }
+  }
 
   // --- Profile info form ---
   const [name, setName] = useState(user?.name || "");
@@ -143,6 +163,18 @@ export default function Profile() {
               {saving ? "Saving…" : "Save Changes"}
             </button>
           </form>
+        </div>
+
+        <div className="card">
+          <h2>API Keys</h2>
+          <p className="text-muted">Create a key for CLI and Terraform. The secret is shown only once.</p>
+          {keyError && <div className="form-error">{keyError}</div>}
+          {newSecret && <div className="form-success">Copy this secret now: <code>{newSecret}</code></div>}
+          <form onSubmit={handleCreateKey} className="profile-form">
+            <label>Key Name<input value={keyName} onChange={(e) => setKeyName(e.target.value)} placeholder="terraform" minLength={2} required /></label>
+            <button type="submit" className="btn btn-primary">Create API Key</button>
+          </form>
+          {keys.map((key) => <div className="list-row" key={key.id}><span>{key.name}</span><span>{key.revoked_at ? "Revoked" : "Active"}</span>{!key.revoked_at && <button className="btn btn-ghost" onClick={() => handleRevokeKey(key.id)}>Revoke</button>}</div>)}
         </div>
 
         {/* ---------- Password ---------- */}

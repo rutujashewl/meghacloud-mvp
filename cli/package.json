@@ -1,0 +1,8 @@
+{
+  "name": "meghacloud-cli",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "bin": { "meghacloud": "index.js" },
+  "scripts": { "start": "node index.js" }
+}

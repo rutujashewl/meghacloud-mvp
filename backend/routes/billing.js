@@ -23,6 +23,22 @@ router.use(requireAuth);
 
 const GST_RATE = 0.18;
 
+router.get("/autopay", async (req, res) => {
+  const user = await db.prepare("SELECT upi_id, autopay_enabled FROM users WHERE id = ?").get(req.user.id);
+  res.json({ autopay: user });
+});
+
+router.put("/autopay", [
+  body("upi_id").trim().matches(/^[\w.-]+@[\w.-]+$/).withMessage("Enter a valid UPI ID"),
+  body("enabled").isBoolean().withMessage("enabled must be true or false"),
+], async (req, res) => {
+  const errors = validationResult(req);
+  if (!errors.isEmpty()) return res.status(400).json({ error: errors.array()[0].msg });
+  await db.prepare("UPDATE users SET upi_id = ?, autopay_enabled = ? WHERE id = ?")
+    .run(req.body.upi_id, req.body.enabled, req.user.id);
+  res.json({ autopay: { upi_id: req.body.upi_id, autopay_enabled: req.body.enabled } });
+});
+
 async function ownedInvoice(id, userId) {
   return db.prepare("SELECT * FROM invoices WHERE id = ? AND user_id = ?").get(id, userId);
 }

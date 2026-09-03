@@ -88,6 +88,12 @@ async function initSchema() {
     );
   `);
 
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS role TEXT NOT NULL DEFAULT 'owner';`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS upi_id TEXT;`);
+  await db.exec(`ALTER TABLE users ADD COLUMN IF NOT EXISTS autopay_enabled BOOLEAN NOT NULL DEFAULT FALSE;`);
+  await db.exec(`UPDATE users SET org_id = id WHERE org_id IS NULL;`);
+
   await db.exec(`
     CREATE TABLE IF NOT EXISTS servers (
       id            SERIAL PRIMARY KEY,
@@ -102,6 +108,8 @@ async function initSchema() {
       updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+  await db.exec(`ALTER TABLE servers ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
+  await db.exec(`UPDATE servers SET org_id = user_id WHERE org_id IS NULL;`);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS invoices (
@@ -117,6 +125,8 @@ async function initSchema() {
       paid_at         TIMESTAMPTZ
     );
   `);
+  await db.exec(`ALTER TABLE invoices ADD COLUMN IF NOT EXISTS org_id INTEGER REFERENCES users(id);`);
+  await db.exec(`UPDATE invoices SET org_id = user_id WHERE org_id IS NULL;`);
 
   await db.exec(`
     CREATE TABLE IF NOT EXISTS notifications (
@@ -140,6 +150,30 @@ async function initSchema() {
       sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );
   `);
+
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS whatsapp_log (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      phone       TEXT NOT NULL,
+      message     TEXT NOT NULL,
+      sent_at     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id          SERIAL PRIMARY KEY,
+      user_id     INTEGER NOT NULL REFERENCES users(id),
+      name        TEXT NOT NULL,
+      key_hash    TEXT NOT NULL UNIQUE,
+      last_used_at TIMESTAMPTZ,
+      revoked_at  TIMESTAMPTZ,
+      created_at  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );
+  `);
+  await db.exec(`ALTER TABLE api_keys ADD COLUMN IF NOT EXISTS key_prefix TEXT;`);
+  await db.exec(`UPDATE api_keys SET key_prefix = 'mc_live_' WHERE key_prefix IS NULL;`);
+  await db.exec(`ALTER TABLE api_keys ALTER COLUMN key_prefix SET NOT NULL;`);
 
   console.log("[db] PostgreSQL schema ready");
 }
